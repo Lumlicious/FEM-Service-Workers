@@ -1,16 +1,20 @@
-(function Blog(){
+(function Blog(global){
 	"use strict";
 
 	var offlineIcon;
-	var isOnline = ("onLine" in navigator) ? navigator.onLine : true;
+	var isOnline = ("onLine" in navigator) && navigator.onLine;
 	var isLoggedIn = /isLoggedIn=1/.test(document.cookie.toString() || "");
-	var usingSW = ("serviceWorker" in navigator );
+	var usingSW = ("serviceWorker" in navigator);
 	var swRegistration;
 	var svcworker;
 
-	document.addEventListener("DOMContentLoaded",ready,false);
+	if (usingSW) {
+		initServiceWorker().catch(console.error);
+	}
 
-	initServiceWorker().catch(console.error)
+	global.isBlogOnline = isBlogOnline;
+
+	document.addEventListener("DOMContentLoaded",ready,false);
 
 
 	// **********************************
@@ -22,59 +26,66 @@
 			offlineIcon.classList.remove("hidden");
 		}
 
-		window.addEventListener("online", function online() {
+		window.addEventListener("online",function online(){
 			offlineIcon.classList.add("hidden");
 			isOnline = true;
 			sendStatusUpdate();
-		})
-
-		window.addEventListener("offline", function(){
+		},false);
+		window.addEventListener("offline",function offline(){
 			offlineIcon.classList.remove("hidden");
 			isOnline = false;
-			sendStatusUpdate()
-		})
+			sendStatusUpdate();
+		},false);
+	}
+
+	function isBlogOnline() {
+		return isOnline;
 	}
 
 	async function initServiceWorker() {
-		// SW will only have access to directory. Needs url rewrite on server to grab file in
-		// js directory 
-		swRegistration = await navigator.serviceWorker.register("/sw.js", {
-			updateViaCache: "none"
-		})
+		swRegistration = await navigator.serviceWorker.register("/sw.js",{
+			updateViaCache: "none",
+		});
 
-		svcworker = swRegistration.installing || swRegistration.waiting || swRegistration.active
+		svcworker = swRegistration.installing || swRegistration.waiting || swRegistration.active;
 		sendStatusUpdate(svcworker);
 
-		navigator.serviceWorker.addEventListener("controllerchange", function onController() {
+		// listen for new service worker to take over
+		navigator.serviceWorker.addEventListener("controllerchange",async function onController(){
 			svcworker = navigator.serviceWorker.controller;
 			sendStatusUpdate(svcworker);
-		})
+		});
 
-		navigator.serviceWorker.addEventListener("message", onSWMessage);
+		navigator.serviceWorker.addEventListener("message",onSWMessage,false);
 	}
 
 	function onSWMessage(evt) {
-		var {data} = evt;
-		if (data.requestStatusUpdate) {
-			console.log("Received status update request from service worker, responding...")
+		var { data } = evt;
+		if (data.statusUpdateRequest) {
+			console.log("Status update requested from service worker, responding...");
 			sendStatusUpdate(evt.ports && evt.ports[0]);
+		}
+		else if (data == "force-logout") {
+			document.cookie = "isLoggedIn=";
+			isLoggedIn = false;
+			sendStatusUpdate();
 		}
 	}
 
 	function sendStatusUpdate(target) {
-		sendSWMessage({ statusUpdate: {isOnline, isLoggedIn}}, target);
+		sendSWMessage({ statusUpdate: { isOnline, isLoggedIn } },target);
 	}
 
-	function sendSWMessage(msg, target) {
+	function sendSWMessage(msg,target) {
 		if (target) {
 			target.postMessage(msg);
 		}
 		else if (svcworker) {
 			svcworker.postMessage(msg);
 		}
-		else {
+		else if (navigator.serviceWorker.controller) {
 			navigator.serviceWorker.controller.postMessage(msg);
 		}
 	}
 
-})();
+})(window);
